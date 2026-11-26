@@ -87,7 +87,7 @@ def rank_image(p,query,topic):
     q=terms(query); t=terms(topic); n=terms(title); desc=terms(description)
     if not q:return -1
     hit=q & (n|desc); subject=t & (n|desc)
-    if not hit or len(hit)/len(q)<.34:return -1
+    if not hit or len(hit)/len(q)<.34 or (len(q)>1 and not (q & n) and len(hit)<2):return -1
     if re.search(r'\b(logo|icon|flag|signature|coat of arms|poster|stamp|map|screenshot|diagram|chart|symbol)\b',title,re.I) and not re.search(r'logo|map|diagram|chart|flag|poster',query,re.I):return -1
     if info.get('mime') not in ('image/jpeg','image/png','image/webp'):return -1
     return 8*len(q&n)+3*len(q&desc)+2*len(subject)+2*len(hit)/len(q)
@@ -122,7 +122,7 @@ def photo(query,topic=''):
 
 def decorate(out,enabled=True):
     if not enabled:return out
-    slides=out['slides'];topic=out['title']; indices=[i for i,s in enumerate(slides) if s.get('layout') not in ('chart','process','diagram','timeline','comparison','closing')][:8]
+    slides=out['slides'];topic=out['title']; indices=[i for i,s in enumerate(slides) if s.get('layout') not in ('chart','closing')][:10]
     if 0 not in indices:indices.insert(0,0)
     def find(i):
         sl=slides[i];query=engine.clean(sl.get('image_query') or (topic+' '+sl['title']),110)
@@ -130,6 +130,13 @@ def decorate(out,enabled=True):
             result=photo(query,topic)
             if result:return result
         except Exception:pass
+        # Retry a narrower subject query rather than accept an unrelated generic photo.
+        words=[w for w in re.findall(r'[A-Za-z0-9]+',query) if w.lower() not in STOP]
+        if len(words)>2:
+            try:
+                result=photo(' '.join(words[:3]),topic)
+                if result:return result
+            except Exception:pass
         if i==0 and query.lower()!=topic.lower():
             try:return photo(topic,topic)
             except Exception:pass
@@ -144,5 +151,6 @@ def decorate(out,enabled=True):
                     seen.add(result['url']);slides[i]['visual']=result;found+=1
             except Exception:pass
     out['visualCount']=found
+    out['visualAttemptCount']=len(indices)
     if found<len(indices):out.setdefault('warnings',[]).append('No sufficiently relevant licensed image was found for some slides; those use editable graphics instead.')
     return out
