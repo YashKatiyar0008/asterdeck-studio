@@ -1,7 +1,7 @@
 """Asterdeck V3: extractive research mode and attributed editorial imagery."""
 import re, io, base64, urllib.parse, urllib.request, concurrent.futures
 from functools import lru_cache
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, ImageDraw, ImageFont
 import engine
 
 def topic_of(prompt):
@@ -87,7 +87,9 @@ def rank_image(p,query,topic):
     q=terms(query); t=terms(topic); n=terms(title); desc=terms(description)
     if not q:return -1
     hit=q & (n|desc); subject=t & (n|desc)
-    if not hit or len(hit)/len(q)<.34 or (len(q)>1 and not (q & n) and len(hit)<2):return -1
+    if not hit or len(hit)/len(q)<.5 or (len(q)>1 and len(hit)<2):return -1
+    if not (q & n):return -1
+    if re.search(r'\b(null modem|serial adapter|connector|cable|unrelated)\b',title,re.I) and not re.search(r'modem|adapter|connector|cable',query,re.I):return -1
     if re.search(r'\b(logo|icon|flag|signature|coat of arms|poster|stamp|map|screenshot|diagram|chart|symbol)\b',title,re.I) and not re.search(r'logo|map|diagram|chart|flag|poster',query,re.I):return -1
     if info.get('mime') not in ('image/jpeg','image/png','image/webp'):return -1
     return 8*len(q&n)+3*len(q&desc)+2*len(subject)+2*len(hit)/len(q)
@@ -116,41 +118,139 @@ def photo(query,topic=''):
             if min(im.size)<160:continue
             im=ImageOps.fit(im,(640,460),method=Image.Resampling.LANCZOS)
             b=io.BytesIO();im.save(b,format='JPEG',quality=82,optimize=True)
-            return {'src':'data:image/jpeg;base64,'+base64.b64encode(b.getvalue()).decode(),'title':p.get('title','').removeprefix('File:'),'author':get('Artist') or 'See original file','license':license,'url':'https://commons.wikimedia.org/wiki/'+urllib.parse.quote(p['title'].replace(' ','_')),'modified':'Cropped for slide layout','query':query,'relevance':round(score,2)}
+            return {'src':'data:image/jpeg;base64,'+base64.b64encode(b.getvalue()).decode(),'title':p.get('title','').removeprefix('File:'),'author':get('Artist') or 'See original file','license':license,'url':'https://commons.wikimedia.org/wiki/'+urllib.parse.quote(p['title'].replace(' ','_')),'modified':'Cropped for slide layout','query':query,'relevance':round(score,2),'kind':'photo'}
         except Exception:continue
     return None
 
+
+def visual_query(slide,topic):
+    title=engine.clean(slide.get('title'),100)
+    q=engine.clean(slide.get('image_query'),110)
+    combined=(topic+' '+title).lower()
+    # Technical ideas are better explained by actual conceptual diagrams.
+    if re.search(r'\b(dbms|database|sql|relational|normalization)\b',combined):
+        if re.search(r'normalization|normal form|redundancy',title,re.I):return 'database normalization relational tables',True
+        if re.search(r'transaction|acid|concurren',title,re.I):return 'database transaction ACID properties',True
+        if re.search(r'query|sql|relational',title,re.I):return 'relational database SQL tables',True
+        if re.search(r'index|b.tree',title,re.I):return 'database index tree',True
+        if re.search(r'design|entity|schema',title,re.I):return 'database entity relationship schema',True
+        if re.search(r'history|milestone|ingres|system r',title,re.I):return 'history relational database systems',True
+        return 'database management system architecture',True
+    return q or engine.clean(topic+' '+title,110), bool(re.search(r'\b(schema|algorithm|architecture|workflow|equation|normalization|protocol|conceptual model)\b',title,re.I))
+
+def font(size,bold=False):
+    for name in (['DejaVuSans-Bold.ttf','/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'] if bold else ['DejaVuSans.ttf','/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf']):
+        try:return ImageFont.truetype(name,size)
+        except OSError:pass
+    try:return ImageFont.load_default(size=size)
+    except TypeError:return ImageFont.load_default()
+
+def diagram(slide,topic,query):
+    """Original, labelled visual summary of the actual slide, not a stock photo."""
+    im=Image.new('RGB',(800,600),'#132333');d=ImageDraw.Draw(im)
+    ink='#eff7ff';muted='#b6cbdc';accent='#69dbc5';panel='#203b50';line='#4d7a90'
+    f=font(29,True); small=font(20); mini=font(16); titlefont=font(36,True)
+    def wrap(t,ft,width,maxlines=3):
+        t=str(t or '').strip();lines=[];row=''
+        for word in t.split():
+            test=(row+' '+word).strip()
+            if d.textlength(test,font=ft)>width and row:lines.append(row);row=word
+            else:row=test
+        if row:lines.append(row)
+        if len(lines)>maxlines:lines=lines[:maxlines];lines[-1]=lines[-1].rstrip('.')+'…'
+        return lines
+    def label(x,y,t,ft,width,fill=ink,maxlines=2):
+        for j,row in enumerate(wrap(t,ft,width,maxlines)):d.text((x,y+j*(ft.size+7 if hasattr(ft,'size') else 25)),row,font=ft,fill=fill)
+    def box(x,y,w,h,t,body=''):
+        d.rounded_rectangle((x,y,x+w,y+h),radius=18,fill=panel,outline=line,width=2)
+        label(x+20,y+14,t,f,w-40,ink,2)
+        if body:label(x+20,y+80,body,mini,w-40,muted,3)
+    def arrow(a,b):
+        d.line((a,b),fill=accent,width=5)
+        import math
+        angle=math.atan2(b[1]-a[1],b[0]-a[0])
+        d.polygon([b,(b[0]-15*math.cos(angle-.55),b[1]-15*math.sin(angle-.55)),(b[0]-15*math.cos(angle+.55),b[1]-15*math.sin(angle+.55))],fill=accent)
+    title=engine.clean(slide.get('title'),100);items=slide.get('items') or []
+    d.rounded_rectangle((18,18,782,582),radius=22,outline='#355164',width=2)
+    d.text((40,35),'VISUAL EXPLAINER',font=mini,fill=accent)
+    label(40,70,title,titlefont,715,ink,2)
+    db=bool(re.search(r'\b(dbms|database|sql|relational|normalization)\b',topic+' '+title,re.I))
+    if db and re.search(r'normalization|normal form|redundancy',title,re.I):
+        box(45,205,305,145,'Combined table','Repeated attributes')
+        box(450,175,305,140,'Entity table','Primary key')
+        box(450,365,305,140,'Related table','Foreign key')
+        arrow((350,260),(450,245));arrow((350,285),(450,425))
+    elif db and re.search(r'sql|relational|design|entity|schema',title,re.I) and not re.search(r'history|milestone',title,re.I):
+        box(42,220,315,180,'Example: Students','student_id (PK) • name')
+        box(443,220,315,180,'Example: Enrolments','student_id (FK) • course')
+        arrow((357,305),(443,305));d.text((363,270),'1 : N',font=mini,fill=accent)
+        label(45,460,'Illustrative relationship using primary and foreign keys.',small,705,muted,2)
+    elif db and not items:
+        box(220,160,360,92,'Applications');box(220,292,360,92,'DBMS');box(220,424,360,92,'Stored data');arrow((400,252),(400,292));arrow((400,384),(400,424))
+    elif slide.get('layout')=='chart' and items and all(isinstance(x.get('value'),(int,float)) and x['value']>=0 for x in items):
+        m=max([x['value'] for x in items]+[1])
+        for j,it in enumerate(items[:3]):
+            y=180+j*115;label(45,y,it.get('heading',''),small,700,ink,1)
+            d.rounded_rectangle((45,y+39,45+max(4,int(565*it['value']/m)),y+65),radius=8,fill=accent)
+            d.text((630,y+37),str(it['value']),font=mini,fill=ink)
+        label(45,525,slide.get('subtitle',''),mini,705,muted,1)
+    else:
+        labels=[engine.clean(x.get('heading'),65) for x in items[:3] if x.get('heading')]
+        if not labels:labels=[engine.clean(slide.get('subtitle') or topic,65)]
+        labels=labels[:3];n=len(labels)
+        is_flow=slide.get('layout') in ('process','timeline')
+        if n==1:
+            box(105,250,590,130,labels[0])
+            d.ellipse((364,172,436,244),outline=accent,width=4)
+            d.line((400,244,400,250),fill=accent,width=4)
+        else:
+            center=(400,220)
+            if is_flow:
+                for j,t in enumerate(labels):
+                    x=40+j*(720//n);width=720//n-25
+                    box(x,280,width,175,t)
+                    if j<n-1:arrow((x+width,365),(x+720//n,365))
+                label(45,485,'Sequence of the slide’s key steps',small,700,muted,1)
+            else:
+                d.ellipse((353,172,447,266),fill='#245664',outline=accent,width=3)
+                d.text((378,199),'KEY',font=mini,fill=ink)
+                for j,t in enumerate(labels):
+                    x=40+j*(720//n);width=720//n-22
+                    arrow((400,266),(x+width//2,340))
+                    box(x,340,width,155,t)
+    d.text((40,548),'Asterdeck • original conceptual illustration',font=mini,fill=muted)
+    b=io.BytesIO();im.save(b,'JPEG',quality=85,optimize=True)
+    return {'kind':'diagram','src':'data:image/jpeg;base64,'+base64.b64encode(b.getvalue()).decode(),'title':title,'author':'Asterdeck','license':'Original conceptual illustration','url':'','query':query,'modified':'Generated from slide concepts'}
+
 def decorate(out,enabled=True):
     if not enabled:return out
-    slides=out['slides'];topic=out['title']; indices=[i for i,s in enumerate(slides) if s.get('layout') not in ('chart','closing')][:10]
-    if 0 not in indices:indices.insert(0,0)
+    slides=out['slides'];topic=out['title'];indices=list(range(len(slides)))
     def find(i):
-        sl=slides[i];query=engine.clean(sl.get('image_query') or (topic+' '+sl['title']),110)
+        sl=slides[i];query,concept=visual_query(sl,topic)
+        if concept or sl.get('layout')=='chart':return None,query
         try:
             result=photo(query,topic)
-            if result:return result
+            if result:return result,query
         except Exception:pass
-        # Retry a narrower subject query rather than accept an unrelated generic photo.
         words=[w for w in re.findall(r'[A-Za-z0-9]+',query) if w.lower() not in STOP]
-        if len(words)>2:
+        if len(words)>3:
             try:
                 result=photo(' '.join(words[:3]),topic)
-                if result:return result
+                if result:return result,query
             except Exception:pass
-        if i==0 and query.lower()!=topic.lower():
-            try:return photo(topic,topic)
-            except Exception:pass
-        return None
-    seen=set();found=0
-    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+        return None,query
+    seen=set();photos=0;diagrams=0
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
         jobs={pool.submit(find,i):i for i in indices}
-        for f,i in jobs.items():
-            try:
-                result=f.result()
-                if result and result['url'] not in seen:
-                    seen.add(result['url']);slides[i]['visual']=result;found+=1
-            except Exception:pass
-    out['visualCount']=found
+        for job,i in jobs.items():
+            try:result,query=job.result()
+            except Exception:result=None;query=slides[i].get('title',topic)
+            if result and result['url'] not in seen:
+                seen.add(result['url']);slides[i]['visual']=result;photos+=1
+            else:
+                slides[i]['visual']=diagram(slides[i],topic,query);diagrams+=1
+    out['visualCount']=photos+diagrams
+    out['photoCount']=photos;out['diagramCount']=diagrams
     out['visualAttemptCount']=len(indices)
-    if found<len(indices):out.setdefault('warnings',[]).append('No sufficiently relevant licensed image was found for some slides; those use editable graphics instead.')
+    if diagrams:out.setdefault('warnings',[]).append(str(diagrams)+' slides use original conceptual diagrams instead of unsuitable or unavailable photographs.')
     return out
