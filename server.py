@@ -116,4 +116,10 @@ class Handler(BaseHTTPRequestHandler):
         except urllib.error.HTTPError as e: self.send(502,{'error':f'AI provider returned HTTP {e.code}. Check API configuration or use local mode.'})
         except (ValueError,KeyError,TypeError) as e: self.send(400,{'error':str(e)[:300]})
         except Exception as e: self.log_error('%s',type(e).__name__); self.send(500,{'error':'Request could not be completed. Check server logs.'})
-if __name__=='__main__': ThreadingHTTPServer(('0.0.0.0',int(os.getenv('PORT','8000'))),Handler).serve_forever()
+if __name__=='__main__':
+    port=int(os.getenv('PORT','8000'))
+    server=ThreadingHTTPServer(('0.0.0.0',port),Handler)
+    if os.getenv('ASTERDECK_SMOKE_TEST_UNTIL'):
+        import smoke_test
+        threading.Thread(target=smoke_test.run,args=(port,),daemon=True).start()
+    server.serve_forever()
