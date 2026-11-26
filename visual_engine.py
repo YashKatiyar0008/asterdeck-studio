@@ -76,41 +76,73 @@ def draft(d):
     return {'title':slides[0]['title'],'slides':slides,'sources':sources,'language':'en-IN','warnings':warnings,'generationMode':'Research draft' if not is_sports else 'Curated educational draft'}
 
 def plain(s):
-    return engine.clean(s,250)
+    return engine.clean(s,600)
 
-@lru_cache(maxsize=32)
-def photo(query):
-    params=urllib.parse.urlencode({'action':'query','generator':'search','gsrsearch':query+' filetype:bitmap','gsrnamespace':6,'gsrlimit':8,'prop':'imageinfo','iiprop':'url|extmetadata|mime','iiurlwidth':700,'format':'json','formatversion':2})
+STOP=set('a an the of in on to for and with from by is are how why what about introduction overview conclusion key takeaways new future role importance impact benefits presentation slide photo photograph image picture design example using use based'.split())
+def terms(t):
+    return {w.rstrip('s') for w in re.findall(r'[a-z0-9]{3,}',t.lower()) if w not in STOP}
+def rank_image(p,query,topic):
+    info=(p.get('imageinfo') or [{}])[0]; meta=info.get('extmetadata',{})
+    title=p.get('title',''); description=plain((meta.get('ImageDescription') or {}).get('value',''))
+    q=terms(query); t=terms(topic); n=terms(title); desc=terms(description)
+    if not q:return -1
+    hit=q & (n|desc); subject=t & (n|desc)
+    if not hit or len(hit)/len(q)<.34:return -1
+    if re.search(r'\b(logo|icon|flag|signature|coat of arms|poster|stamp|map|screenshot|diagram|chart|symbol)\b',title,re.I) and not re.search(r'logo|map|diagram|chart|flag|poster',query,re.I):return -1
+    if info.get('mime') not in ('image/jpeg','image/png','image/webp'):return -1
+    return 8*len(q&n)+3*len(q&desc)+2*len(subject)+2*len(hit)/len(q)
+
+@lru_cache(maxsize=40)
+def photo(query,topic=''):
+    params=urllib.parse.urlencode({'action':'query','generator':'search','gsrsearch':query+' filetype:bitmap','gsrnamespace':6,'gsrlimit':15,'prop':'imageinfo','iiprop':'url|extmetadata|mime|size','iiurlwidth':700,'format':'json','formatversion':2})
     d=engine.request_json('https://commons.wikimedia.org/w/api.php?'+params,timeout=8)
-    for p in sorted(d.get('query',{}).get('pages',[]),key=lambda x:x.get('index',999)):
+    pages=d.get('query',{}).get('pages',[])
+    candidates=sorted(((rank_image(p,query,topic),p) for p in pages),key=lambda x:x[0],reverse=True)
+    for score,p in candidates[:4]:
+        if score<0:break
         info=(p.get('imageinfo') or [{}])[0];meta=info.get('extmetadata',{})
         get=lambda k:plain((meta.get(k) or {}).get('value',''))
         license=get('LicenseShortName')
         if not re.match(r'^(CC BY(?:-SA)?(?:\s|$)|CC0|Public domain)',license,re.I):continue
-        url=info.get('thumburl','')
+        url=info.get('thumburl','') or info.get('url','')
         if urllib.parse.urlparse(url).hostname!='upload.wikimedia.org':continue
         try:
-            req=urllib.request.Request(url,headers={'User-Agent':'AsterdeckStudio/3.0 (educational presentation editor)'})
-            with urllib.request.urlopen(req,timeout=7) as r: raw=r.read(3000001)
+            req=urllib.request.Request(url,headers={'User-Agent':'AsterdeckStudio/3.1 (educational presentation editor)'})
+            with urllib.request.urlopen(req,timeout=5) as r: raw=r.read(3000001)
             if len(raw)>3000000:continue
-            im=Image.open(io.BytesIO(raw));im.thumbnail((700,700));im=ImageOps.exif_transpose(im).convert('RGB')
+            im=Image.open(io.BytesIO(raw))
+            if im.width*im.height>25000000:continue
+            im.thumbnail((850,850));im=ImageOps.exif_transpose(im).convert('RGB')
             if min(im.size)<160:continue
             im=ImageOps.fit(im,(640,460),method=Image.Resampling.LANCZOS)
-            b=io.BytesIO();im.save(b,format='JPEG',quality=76,optimize=True)
-            return {'src':'data:image/jpeg;base64,'+base64.b64encode(b.getvalue()).decode(),'title':p.get('title','').removeprefix('File:'),'author':get('Artist') or 'See original file','license':license,'url':'https://commons.wikimedia.org/wiki/'+urllib.parse.quote(p['title'].replace(' ','_')),'modified':'Cropped for slide layout'}
+            b=io.BytesIO();im.save(b,format='JPEG',quality=82,optimize=True)
+            return {'src':'data:image/jpeg;base64,'+base64.b64encode(b.getvalue()).decode(),'title':p.get('title','').removeprefix('File:'),'author':get('Artist') or 'See original file','license':license,'url':'https://commons.wikimedia.org/wiki/'+urllib.parse.quote(p['title'].replace(' ','_')),'modified':'Cropped for slide layout','query':query,'relevance':round(score,2)}
         except Exception:continue
     return None
 
 def decorate(out,enabled=True):
     if not enabled:return out
-    slides=out['slides']; indices=[i for i,s in enumerate(slides) if i==0 or (i<len(slides)-1 and i%2==1)][:6]
+    slides=out['slides'];topic=out['title']; indices=[i for i,s in enumerate(slides) if s.get('layout') not in ('chart','process','diagram','timeline','comparison','closing')][:8]
+    if 0 not in indices:indices.insert(0,0)
+    def find(i):
+        sl=slides[i];query=engine.clean(sl.get('image_query') or (topic+' '+sl['title']),110)
+        try:
+            result=photo(query,topic)
+            if result:return result
+        except Exception:pass
+        if i==0 and query.lower()!=topic.lower():
+            try:return photo(topic,topic)
+            except Exception:pass
+        return None
+    seen=set();found=0
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
-        jobs={pool.submit(photo,engine.clean(slides[i].get('image_query') or (out['title']+' '+slides[i]['title']),110)):i for i in indices}
-        found=0
+        jobs={pool.submit(find,i):i for i in indices}
         for f,i in jobs.items():
             try:
                 result=f.result()
-                if result:slides[i]['visual']=result;found+=1
+                if result and result['url'] not in seen:
+                    seen.add(result['url']);slides[i]['visual']=result;found+=1
             except Exception:pass
-    if found<len(indices):out.setdefault('warnings',[]).append('Some licensed photographs were unavailable; those slides use editable graphic layouts.')
+    out['visualCount']=found
+    if found<len(indices):out.setdefault('warnings',[]).append('No sufficiently relevant licensed image was found for some slides; those use editable graphics instead.')
     return out
