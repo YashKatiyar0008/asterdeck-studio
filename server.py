@@ -1,5 +1,6 @@
 import time, threading, hmac, collections
 import engine
+import visual_engine
 import base64, io, json, os, urllib.error
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
@@ -41,6 +42,8 @@ def make_pptx(deck):
         lookup={x.get('id'):x for x in deck.get('sources',[]) if isinstance(x,dict)}
         refs=[lookup[i] for i in slide.get('citations',[]) if i in lookup]
         if refs:notes+='\n\nSources (review original):\n'+'\n'.join(str(r.get('title',''))+' — '+str(r.get('url','')) for r in refs)
+        visual=slide.get('visual') or {}
+        if visual.get('url'):notes+='\n\nImage: '+str(visual.get('title',''))+' — '+str(visual.get('author',''))+' — '+str(visual.get('license',''))+' — '+str(visual['url'])+' — cropped for layout.'
         if notes:s.notes_slide.notes_text_frame.text=notes[:8000]
         transition=slide.get('transition','none')
         if transition in ('fade','slide','zoom'):
@@ -79,7 +82,7 @@ class Handler(BaseHTTPRequestHandler):
         for k,v in (extra or {}).items(): self.send_header(k,v)
         self.end_headers(); self.wfile.write(body)
     def do_GET(self):
-        if self.path=='/api/health': self.send(200,{'ok':True,'ai':bool(os.getenv('SARVAM_API_KEY')),'provider':'Sarvam','protected':bool(os.getenv('DEMO_ACCESS_CODE'))})
+        if self.path=='/api/health': self.send(200,{'ok':True,'ai':bool(os.getenv('SARVAM_API_KEY')),'provider':'Sarvam','researchDraft':True,'version':3,'protected':bool(os.getenv('DEMO_ACCESS_CODE'))})
         elif self.path.split('?')[0] in ('/','/index.html'): self.send(200,(ROOT/'index.html').read_bytes(),'text/html; charset=utf-8')
         else: self.send(404,{'error':'Not found'})
     def do_POST(self):
@@ -93,7 +96,13 @@ class Handler(BaseHTTPRequestHandler):
                 if not allow_paid(self.client_address[0]):return self.send(429,{'error':'Too many requests. Try again in a minute.'})
             if self.path=='/api/export': self.send(200,make_pptx(d),'application/vnd.openxmlformats-officedocument.presentationml.presentation',{'Content-Disposition':'attachment; filename="asterdeck.pptx"'})
             elif self.path=='/api/extract': self.send(200,{'text':extract(d)})
-            elif self.path=='/api/generate': self.send(200,engine.generate(d))
+            elif self.path=='/api/generate':
+                if d.get('mode')=='research' or not os.getenv('SARVAM_API_KEY'):
+                    out=visual_engine.draft(d)
+                else:
+                    d['prompt']=visual_engine.topic_of(d.get('prompt',''))
+                    out=engine.generate(d);out['generationMode']='Sarvam AI'
+                self.send(200,visual_engine.decorate(out,d.get('visuals',True)))
             elif self.path=='/api/research': self.send(200,engine.research(engine.clean(d.get('query'),240)))
             elif self.path=='/api/tts': self.send(200,engine.tts(d))
             elif self.path=='/api/coach': self.send(200,engine.coach(d))
