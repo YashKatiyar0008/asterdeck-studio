@@ -36,7 +36,7 @@ def sarvam(payload,path='/v1/chat/completions'):
     if not key:raise ValueError('Configure SARVAM_API_KEY in the server environment.')
     return request_json('https://api.sarvam.ai'+path,payload,{'api-subscription-key':key},timeout=100)
 def chat(system,user,max_tokens=10000):
-    d=sarvam({'model':os.getenv('SARVAM_MODEL','sarvam-105b'),'messages':[{'role':'system','content':system},{'role':'user','content':json.dumps(user,ensure_ascii=False)}],'max_tokens':max_tokens,'temperature':.3,'reasoning_effort':None})
+    d=sarvam({'model':os.getenv('SARVAM_MODEL','sarvam-105b'),'messages':[{'role':'system','content':system},{'role':'user','content':json.dumps(user,ensure_ascii=False)}],'max_tokens':max_tokens,'temperature':.3})
     content=d['choices'][0]['message'].get('content') or ''
     try:return json.loads(content)
     except ValueError:
