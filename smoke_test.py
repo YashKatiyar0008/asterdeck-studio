@@ -44,9 +44,11 @@ def run(port):
         emit('pdf_extract',len(data)>10*1024*1024 and 'photovoltaic panels' in extracted and 'inverters' in extracted.lower(),bytes=len(data),characters=len(extracted))
     except Exception as e:emit('pdf_or_health',False,error=str(e)[:240])
     try:
-        result=call('/api/generate',{'prompt':'How solar photovoltaic power works','count':3,'audience':'General','purpose':'Teaching lesson','language':'en-IN','source':extracted,'research':True,'visuals':False,'mode':'ai'},230)
+        result=call('/api/generate',{'prompt':'How solar photovoltaic power works','count':8,'audience':'General','purpose':'Teaching lesson','language':'en-IN','source':extracted,'research':True,'visuals':True,'mode':'ai'},230)
         slides=result.get('slides',[]);combined=' '.join(str(s.get('title',''))+' '+str(s.get('items','')) for s in slides).lower()
         mode=result.get('generationMode','');sources=result.get('sources',[]);queries=result.get('researchQueries',[])
-        emit('sarvam_deck',len(slides)==3 and mode.startswith('Sarvam') and any(x in combined for x in ('photovoltaic','solar','sunlight')),slides=len(slides),mode=mode,source_count=len(sources),query_count=len(queries))
+        emit('sarvam_deck',len(slides)==8 and mode.startswith('Sarvam') and any(x in combined for x in ('photovoltaic','solar','sunlight')),slides=len(slides),mode=mode,source_count=len(sources),query_count=len(queries))
         emit('external_research',bool(sources and queries),sources=len(sources),queries=len(queries))
+        images=[x.get('visual') for x in slides if x.get('visual')]
+        emit('slide_images',bool(images) and all(v.get('src','').startswith('data:image/jpeg;base64,') and v.get('license') for v in images),count=len(images),attempted=result.get('visualAttemptCount',0),titles=[v.get('title','')[:120] for v in images])
     except Exception as e:emit('sarvam_deck',False,error=str(e)[:240])
