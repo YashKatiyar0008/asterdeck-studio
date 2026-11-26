@@ -36,7 +36,7 @@ def sarvam(payload,path='/v1/chat/completions'):
     if not key:raise ValueError('Configure SARVAM_API_KEY in the server environment.')
     return request_json('https://api.sarvam.ai'+path,payload,{'api-subscription-key':key},timeout=100)
 def chat(system,user,max_tokens=10000):
-    d=sarvam({'model':os.getenv('SARVAM_MODEL','sarvam-105b'),'messages':[{'role':'system','content':system},{'role':'user','content':json.dumps(user,ensure_ascii=False)}],'max_tokens':max_tokens,'temperature':.3})
+    d=sarvam({'model':os.getenv('SARVAM_MODEL','sarvam-105b'),'messages':[{'role':'system','content':system},{'role':'user','content':json.dumps(user,ensure_ascii=False)}],'max_tokens':max_tokens,'temperature':.3,'response_format':{'type':'json_object'}})
     content=d['choices'][0]['message'].get('content') or ''
     try:return json.loads(content)
     except ValueError:
@@ -81,7 +81,6 @@ def tts(d):
     if not 1<=len(text)<=2500: raise ValueError('Narration must be between 1 and 2500 characters.')
     if language not in LANGUAGES or speaker not in SARVAM_VOICES: raise ValueError('Select a supported Sarvam Bulbul v3 voice and language.')
     pace=max(.5,min(2,float(d.get('pace',1))))
-    pitch=max(-.5,min(.5,float(d.get('pitch',0))))
-    result=sarvam({'text':text,'language_code':language,'speaker':speaker,'model':'bulbul:v3','pace':pace,'pitch':pitch,'output_audio_codec':'mp3','speech_sample_rate':24000},'/text-to-speech')
+    result=sarvam({'text':text,'language_code':language,'speaker':speaker,'model':'bulbul:v3','pace':pace,'output_audio_codec':'mp3','speech_sample_rate':24000},'/text-to-speech')
     if not result.get('audios'): raise ValueError('Sarvam returned no audio.')
     return {'audio':result['audios'][0],'mime':'audio/mpeg','speaker':speaker,'model':'bulbul:v3'}
