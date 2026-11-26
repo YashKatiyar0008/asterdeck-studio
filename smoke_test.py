@@ -50,5 +50,5 @@ def run(port):
         emit('sarvam_deck',len(slides)==8 and mode.startswith('Sarvam') and any(x in combined for x in ('photovoltaic','solar','sunlight')),slides=len(slides),mode=mode,source_count=len(sources),query_count=len(queries))
         emit('external_research',bool(sources and queries),sources=len(sources),queries=len(queries))
         images=[x.get('visual') for x in slides if x.get('visual')]
-        emit('slide_images',bool(images) and all(v.get('src','').startswith('data:image/jpeg;base64,') and v.get('license') for v in images),count=len(images),attempted=result.get('visualAttemptCount',0),titles=[v.get('title','')[:120] for v in images])
+        emit('slide_images',bool(slides) and len(images)==len(slides) and all(v.get('src','').startswith('data:image/jpeg;base64,') and v.get('license') for v in images),count=len(images),slide_count=len(slides),photos=result.get('photoCount',0),diagrams=result.get('diagramCount',0),attempted=result.get('visualAttemptCount',0),titles=[v.get('title','')[:120] for v in images])
     except Exception as e:emit('sarvam_deck',False,error=str(e)[:240])
