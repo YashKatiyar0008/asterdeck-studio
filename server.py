@@ -14,7 +14,8 @@ from pypdf import PdfReader
 from docx import Document
 from PIL import Image
 ROOT=Path(__file__).parent
-MAX=20*1024*1024
+MAX=44*1024*1024
+DOCUMENT_MAX=30*1024*1024
 
 def rgb(value):
     return RGBColor.from_string(value.lstrip('#').upper())
@@ -56,14 +57,18 @@ def make_pptx(deck):
 
 def extract(data):
     name=data['name'].lower(); raw=base64.b64decode(data['data'].split(',',1)[-1],validate=True)
-    if len(raw)>10*1024*1024: raise ValueError('Maximum document size is 10 MB.')
+    if len(raw)>DOCUMENT_MAX: raise ValueError('Maximum document size is 30 MB.')
     if name.endswith('.pdf'):
-        reader=PdfReader(io.BytesIO(raw)); result='\n'.join((p.extract_text() or '') for p in reader.pages[:100])
+        reader=PdfReader(io.BytesIO(raw)); parts=[]; total=0
+        for p in reader.pages[:120]:
+            t=(p.extract_text() or '')[:12000]; parts.append(t); total+=len(t)
+            if total>=50000:break
+        result='\n'.join(parts)
     elif name.endswith('.docx'): result='\n'.join(p.text for p in Document(io.BytesIO(raw)).paragraphs)
     elif name.endswith(('.txt','.md','.csv')): result=raw.decode('utf-8',errors='replace')
     else: raise ValueError('Supported: PDF, DOCX, TXT, MD and CSV.')
     if not result.strip(): raise ValueError('No selectable text found. Scanned PDFs require OCR before upload.')
-    return result[:35000]
+    return result[:50000]
 
 RATE=collections.defaultdict(collections.deque)
 LOCK=threading.Lock()
@@ -82,7 +87,7 @@ class Handler(BaseHTTPRequestHandler):
         for k,v in (extra or {}).items(): self.send_header(k,v)
         self.end_headers(); self.wfile.write(body)
     def do_GET(self):
-        if self.path=='/api/health': self.send(200,{'ok':True,'ai':bool(os.getenv('SARVAM_API_KEY')),'provider':'Sarvam','researchDraft':True,'version':3,'protected':bool(os.getenv('DEMO_ACCESS_CODE'))})
+        if self.path=='/api/health': self.send(200,{'ok':True,'ai':bool(os.getenv('SARVAM_API_KEY')),'provider':'Sarvam','researchDraft':True,'version':'3.5','protected':bool(os.getenv('DEMO_ACCESS_CODE'))})
         elif self.path.split('?')[0] in ('/','/index.html'): self.send(200,(ROOT/'index.html').read_bytes(),'text/html; charset=utf-8')
         else: self.send(404,{'error':'Not found'})
     def do_POST(self):
@@ -97,11 +102,12 @@ class Handler(BaseHTTPRequestHandler):
             if self.path=='/api/export': self.send(200,make_pptx(d),'application/vnd.openxmlformats-officedocument.presentationml.presentation',{'Content-Disposition':'attachment; filename="asterdeck.pptx"'})
             elif self.path=='/api/extract': self.send(200,{'text':extract(d)})
             elif self.path=='/api/generate':
+                if d.get('mode')=='ai' and not os.getenv('SARVAM_API_KEY'):raise ValueError('Sarvam API key is not configured on the server.')
                 if d.get('mode')=='research' or not os.getenv('SARVAM_API_KEY'):
                     out=visual_engine.draft(d)
                 else:
                     d['prompt']=visual_engine.topic_of(d.get('prompt',''))
-                    out=engine.generate(d);out['generationMode']='Sarvam AI'
+                    out=engine.generate(d)
                 self.send(200,visual_engine.decorate(out,d.get('visuals',True)))
             elif self.path=='/api/research': self.send(200,engine.research(engine.clean(d.get('query'),240)))
             elif self.path=='/api/tts': self.send(200,engine.tts(d))
