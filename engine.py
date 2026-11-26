@@ -71,9 +71,15 @@ def generate(d):
     result=normalize(out,count,r['sources'],language); result['warnings']=r['warnings'];return result
 def coach(d):
     return chat('You are a supportive presentation coach. Return only JSON with keys summary (string), questions (array of 4 objects question, answer), improvements (array of 3 strings). Use only the supplied deck; clearly mark unsupported evidence and do not invent facts. Answers should be concise and suitable for a hackathon judge.',{'title':clean(d.get('title'),120),'slides':d.get('slides',[])[:20]},2500)
+SARVAM_VOICES = ["shubh","aditya","rahul","rohan","amit","dev","ratan","varun","manan","sumit","kabir","aayan","ashutosh","advait","anand","tarun","sunny","mani","gokul","vijay","mohit","rehan","soham","ritu","priya","neha","pooja","simran","kavya","ishita","shreya","roopa","tanya","shruti","suhani","kavitha","rupali"]
 def tts(d):
-    text=str(d.get('text','')).strip(); language=d.get('language','en-IN'); speaker=d.get('speaker','shubh')
-    if not 1<=len(text)<=2500:raise ValueError('Narration must be between 1 and 2500 characters.')
-    if language not in LANGUAGES or speaker not in ['shubh','priya','kavya']:raise ValueError('Invalid speech settings.')
-    result=sarvam({'text':text,'language_code':language,'speaker':speaker,'model':'bulbul:v3','pace':max(.5,min(2,float(d.get('pace',1)))),'output_audio_codec':'mp3','speech_sample_rate':24000},'/text-to-speech')
-    return {'audio':result['audios'][0],'mime':'audio/mpeg'}
+    text=str(d.get('text','')).strip()
+    language=d.get('language','en-IN')
+    speaker=str(d.get('speaker','shubh')).strip().lower()
+    if not 1<=len(text)<=2500: raise ValueError('Narration must be between 1 and 2500 characters.')
+    if language not in LANGUAGES or speaker not in SARVAM_VOICES: raise ValueError('Select a supported Sarvam Bulbul v3 voice and language.')
+    pace=max(.5,min(2,float(d.get('pace',1))))
+    pitch=max(-.5,min(.5,float(d.get('pitch',0))))
+    result=sarvam({'text':text,'language_code':language,'speaker':speaker,'model':'bulbul:v3','pace':pace,'pitch':pitch,'output_audio_codec':'mp3','speech_sample_rate':24000},'/text-to-speech')
+    if not result.get('audios'): raise ValueError('Sarvam returned no audio.')
+    return {'audio':result['audios'][0],'mime':'audio/mpeg','speaker':speaker,'model':'bulbul:v3'}
