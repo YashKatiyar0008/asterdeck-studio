@@ -87,7 +87,7 @@ class Handler(BaseHTTPRequestHandler):
         for k,v in (extra or {}).items(): self.send_header(k,v)
         self.end_headers(); self.wfile.write(body)
     def do_GET(self):
-        if self.path=='/api/health': self.send(200,{'ok':True,'ai':bool(os.getenv('SARVAM_API_KEY')),'provider':'Sarvam','researchDraft':True,'version':'3.5','protected':bool(os.getenv('DEMO_ACCESS_CODE'))})
+        if self.path=='/api/health': self.send(200,{'ok':True,'ai':bool(os.getenv('SARVAM_API_KEY')),'provider':'Sarvam','researchDraft':True,'version':'3.6','protected':bool(os.getenv('DEMO_ACCESS_CODE'))})
         elif self.path.split('?')[0] in ('/','/index.html'): self.send(200,(ROOT/'index.html').read_bytes(),'text/html; charset=utf-8')
         else: self.send(404,{'error':'Not found'})
     def do_POST(self):
